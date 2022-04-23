@@ -7,8 +7,6 @@ from geojson import Feature, FeatureCollection, Point
 
 def read_in_data(raw_data_path):
     # Load San Francisco Registered Business Locations
-    raw_data_path = 'notebooks/raw/Registered_Business_Locations_-_San_Francisco.csv'
-
     rbs = pd.read_csv(raw_data_path)
 
     return rbs
@@ -95,10 +93,12 @@ if __name__ == '__main__':
         rbs_loc,
         'lat',
         'lon',
-        ['Business Start Date',
-         'Business End Date',
-         'Location Start Date',
-         'Location End Date'],
+        [
+            'Business Start Date',
+            'Business End Date',
+            'Location Start Date',
+            'Location End Date'
+        ],
         'geojson_0.geojson'
     )
 
