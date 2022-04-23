@@ -77,7 +77,11 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 *.ipynb
+/notebooks
 .idea/
+
+# GEO Data
+*.geojson
 
 # IPython
 profile_default/
