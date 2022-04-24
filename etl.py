@@ -1,5 +1,5 @@
 import pandas as pd
-# import prefect
+from prefect import flow
 import requests
 import json
 from geojson import Feature, FeatureCollection, Point
@@ -7,7 +7,7 @@ from geojson import Feature, FeatureCollection, Point
 
 def read_in_data(raw_data_path):
     # Load San Francisco Registered Business Locations
-    rbs = pd.read_csv(raw_data_path)
+    rbs = pd.read_csv(raw_data_path).iloc[:5]
 
     return rbs
 
@@ -16,13 +16,14 @@ def build_query_string_list(rbs):
     query_tail = "&format=json"
 
     query_strings = []
-    for i, row in rbs.iloc[:5].iterrows():
+    for i, row in rbs.iterrows():
         address_part = f"street={row['Street Address']}&city={row['City']}"
         q_string = api_header + address_part + query_tail
         query_strings.append(q_string)
 
     return query_strings
 
+# I need to have a backup plan for when this fails when given all data
 def get_lat_lon_from_api(query_string):
     resp = requests.get(query_string)
     lat = resp.json()[0]['lat']
@@ -87,7 +88,7 @@ if __name__ == '__main__':
 
     lat, lon = query_lat_lon_arrays(query_strings)
 
-    rbs_loc = insert_lat_lon_cols(rbs.iloc[:5], lat, lon)
+    rbs_loc = insert_lat_lon_cols(rbs, lat, lon)
 
     convert_df_to_geojson_file(
         rbs_loc,
