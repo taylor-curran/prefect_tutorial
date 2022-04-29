@@ -8,22 +8,28 @@ import os
 import time
 
 # task - its prone it failing when env changes
-@task
-def read_in_data(raw_data_path):
+@task(name="Read in DataFrame from CSV")
+def read_in_data_t(raw_data_path):
     # Load San Francisco Registered Business Locations
-    rbs = pd.read_csv(raw_data_path).iloc[:5]
+    raw_df = pd.read_csv(raw_data_path).iloc[:5]
 
-    return rbs
+    return raw_df
+
 
 # Long for loop - iterates through entire df
 # Could be a task but might benefit from async
-def build_query_string_list(rbs):
-    """Building query strings to be sent to API"""
+@task(name="Build API Queue")
+def build_api_call_list(address_df):
+    """
+    Building query strings to be sent to API
+    :df: Dataframe with 'Street Address' and 'City Columns'
+    """
+
     api_header = "https://nominatim.openstreetmap.org/search?"
     query_tail = "&format=json"
 
     query_strings = []
-    for i, row in rbs.result().iterrows():
+    for i, row in address_df.iterrows():
         address_part = f"street={row['Street Address']}&city={row['City']}"
         q_string = api_header + address_part + query_tail
         query_strings.append(q_string)
@@ -31,10 +37,13 @@ def build_query_string_list(rbs):
     return query_strings
 
 # I need to have a backup plan for when this fails when given all data
-# Task
+# I should be able to add retries ... but really I just want a pass here not a retry
+# Or could I create a retry with a modified string?
+@task(name="Bullets to API")
 def get_lat_lon_from_api(query_string):
     """Single call to API, returns lat lon coords in tuple"""
     resp = requests.get(query_string)
+    # Failure Encountered
     lat = resp.json()[0]['lat']
     lon = resp.json()[0]['lon']
 
@@ -42,6 +51,7 @@ def get_lat_lon_from_api(query_string):
 
 # I could also make this async
 # Flow or Task?
+@flow(name='Machine Gun to API')
 def query_lat_lon_arrays(query_strings):
     """
     Makes an API call for each row of DF
@@ -50,103 +60,124 @@ def query_lat_lon_arrays(query_strings):
     lat = []
     lon = []
     for string in query_strings:
-        lat_lon = get_lat_lon_from_api(string)
+        lat_lon = get_lat_lon_from_api(string).result()
 
         lat.append(lat_lon[0])
         lon.append(lat_lon[1])
 
     return [lat, lon]
 
-# Task
+# This one might be a bit tricky
+@task(name="Append Lat/Lon Info into New Cols")
 def insert_lat_lon_cols(df, lat, lon):
     """Appends lat lon lists as columns to DF"""
-    df.result().insert(df.result().shape[1], 'lat', lat)
-    df.result().insert(df.result().shape[1], 'lon', lon)
 
-    return df.result()
-
-# TODO: I could break this flow into more tasks
-# @flow(name="Convert Pandas DF to GeoJSON File",
-#       description="Ends with a GeoJSON File that can be thrown into Tableau with fields from the df associated with points/shapes/etc",
-#       version=os.getenv("GIT_COMMIT_SHA"))
-
-
-def fix_dtypes_for_geojson(df, lat_col_title, lon_col_title, datetime_cols):
-    df[lat_col_title] = df[lat_col_title].astype(float)
-    df[lon_col_title] = df[lon_col_title].astype(float)
-
-    # Convert everything to str
-    for col in datetime_cols:
-        df[col] = df[col].astype(str)
+    df.insert(df.shape[1], 'lat', lat)
+    df.insert(df.shape[1], 'lon', lon)
 
     return df
 
-def save_to_file(output_geojson_path, feature_collection):
-    with open(str(output_geojson_path), 'w', encoding='utf-8') as f:
-        json.dump(feature_collection, f, ensure_ascii=False)
+@task(name="Fix Dtypes for GEOJson")
+def fix_dtypes_for_geojson(
+        df,
+        datetime_cols=None
+):
 
-# ^Adding this flow to below function results in this error:
-# ValueError: [TypeError("'numpy.int64' object is not iterable"),
-# TypeError('vars() argument must have __dict__ attribute')]
-def convert_df_to_geojson_file(df, lat_col_title, lon_col_title, datetime_cols, output_geojson_path):
+    df['lat'] = df['lat'].astype(float)
+    df['lon'] = df['lon'].astype(float)
 
-    df = fix_dtypes_for_geojson(df, lat_col_title, lon_col_title, datetime_cols)
+    # Convert everything to str
+    if datetime_cols:
+        for col in datetime_cols:
+            df[col] = df[col].astype(str)
 
+    return df
+
+@task(name="Convert DF to GeoJSON")
+def convert_df_to_geojson_file(df):
+
+    # This could be its own function maybe?
     # columns used for constructing geojson object
     features = df.apply(
-        lambda row: Feature(geometry=Point((float(row[lon_col_title]), float(row[lat_col_title])))),
+        lambda row: Feature(geometry=Point((float(row['lon']), float(row['lat'])))),
         axis=1).tolist()
 
     # all the other columns used as properties
-    properties = df.drop([lat_col_title, lon_col_title], axis=1).to_dict('records')
+    properties = df.drop(['lat', 'lon'], axis=1).to_dict('records')
 
+    # I can probably drop this
     # whole geojson object
-    feature_collection = FeatureCollection(features=features, properties=properties)
+    # feature_collection = FeatureCollection(features=features, properties=properties)
 
     for i in range(len(features)):
         features[i]["properties"] = properties[i]
 
     feature_collection = FeatureCollection(features=features)
 
-    save_to_file(output_geojson_path, feature_collection)
+    return feature_collection
+
+@task(name="Save GeoJSON to File")
+def save_to_file(
+        feature_collection,
+        # Could I use flow metat data to increment a default output file no.?
+        # Like try_0.geojson, try_1.geojson
+        output_geojson_path='geospatial_data.geojson'
+):
+
+    with open(str(output_geojson_path), 'w', encoding='utf-8') as f:
+        json.dump(feature_collection, f, ensure_ascii=False)
 
     print(f"\nGeoJSON Data Saved to {output_geojson_path}.\n")
 
-@flow(task_runner=DaskTaskRunner())
-def main(raw_data_path,
-         output_geojson_path):
 
-    rbs = read_in_data(raw_data_path)
+@flow(name="DF to GeoJSON __ Try 0")
+def main(
+        raw_data_path,
+        output_geojson_path,
+        datetime_cols=None
 
-    query_strings = build_query_string_list(rbs)
+):
+     address_df = read_in_data_t(raw_data_path).result()
 
-    ll = query_lat_lon_arrays(query_strings)
-    lat = ll[0]
-    lon = ll[1]
+     api_calls = build_api_call_list(address_df).result()
 
-    rbs_loc = insert_lat_lon_cols(rbs, lat, lon)
+     lat, lon = query_lat_lon_arrays(api_calls).result()
 
-    convert_df_to_geojson_file(
-        rbs_loc,
-        'lat',
-        'lon',
-        [
-            'Business Start Date',
-            'Business End Date',
-            'Location Start Date',
-            'Location End Date'
-        ],
-        output_geojson_path
-    )
+     lat_lon_df = insert_lat_lon_cols(address_df, lat, lon).result()
+
+     cleaned_lat_lon_df = fix_dtypes_for_geojson(lat_lon_df, datetime_cols).result()
+
+     feature_collection = convert_df_to_geojson_file(cleaned_lat_lon_df).result()
+
+     save_to_file(feature_collection, output_geojson_path)
+
+
+     print('------------ MAIN ----- Done! ------------')
 
 
 if __name__ == '__main__':
     start_time = time.time()
 
+    # Required User Input
+    # I could automate the detection of date columns
+
     raw_data_path = 'notebooks/raw/Registered_Business_Locations_-_San_Francisco.csv'
 
-    state = main(raw_data_path, 'geojson_0.geojson')
+    date_time_cols = [
+        'Business Start Date',
+        'Business End Date',
+        'Location Start Date',
+        'Location End Date'
+    ]
 
-    print(state)
+    output_geojson_path = 'geojson_0.geojson'
+
+    state = main(
+        raw_data_path,
+        output_geojson_path,
+        date_time_cols
+    )
+
+    print("||--|-STATE-|--||\n", state)
 
     print("--- %s seconds ---" % (time.time() - start_time))
