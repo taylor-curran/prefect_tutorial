@@ -6,6 +6,8 @@ from geojson import Feature, FeatureCollection, Point
 from prefect.task_runners import DaskTaskRunner
 import os
 import time
+import asyncio
+
 
 # task - its prone it failing when env changes
 @task(name="Read in DataFrame from CSV")
@@ -50,7 +52,6 @@ def get_lat_lon_from_api(query_string):
     return (lat, lon)
 
 # I could also make this async
-# Flow or Task?
 @flow(name='Machine Gun to API')
 def query_lat_lon_arrays(query_strings):
     """
@@ -130,12 +131,12 @@ def save_to_file(
     print(f"\nGeoJSON Data Saved to {output_geojson_path}.\n")
 
 
-@flow(name="DF to GeoJSON __ Try 0")
+@flow(name="DF to GeoJSON",
+      version=os.getenv("GIT_COMMIT_SHA"))
 def main(
         raw_data_path,
         output_geojson_path,
         datetime_cols=None
-
 ):
      address_df = read_in_data_t(raw_data_path).result()
 
@@ -170,7 +171,7 @@ if __name__ == '__main__':
         'Location End Date'
     ]
 
-    output_geojson_path = 'geojson_0.geojson'
+    output_geojson_path = 'geojson_1.geojson'
 
     state = main(
         raw_data_path,
