@@ -13,7 +13,7 @@ import asyncio
 @task(name="Read in DataFrame from CSV")
 def read_in_data_t(raw_data_path: str):
     # Load San Francisco Registered Business Locations
-    raw_df = pd.read_csv(raw_data_path).iloc[:5]
+    raw_df = pd.read_csv(raw_data_path).iloc[:100]
 
     return raw_df
 
@@ -38,36 +38,51 @@ def build_api_call_list(address_df: pd.DataFrame):
 
     return query_strings
 
+# Prefect makes it easy to configure a state dependency between two or
+# more task runs using the special [wait_for] keyword argument
+@task(name="Handle Bad API Response")
+def handle_bad_api_response():
+    pass
+
+
 
 # I need to have a backup plan for when this fails when given all data
 # I should be able to add retries ... but really I just want a pass here not a retry
 # Or could I create a retry with a modified string?
-@task(name="Bullets to API")
+@task(name="Bullet to API")
 def get_lat_lon_from_api(query_string: str):
     """Single call to API, returns lat lon coords in tuple"""
     resp = requests.get(query_string)
-    # Failure Encountered
-    lat = resp.json()[0]['lat']
-    lon = resp.json()[0]['lon']
 
-    return (lat, lon)
+    try:
+        lat = resp.json()[0]['lat']
+        lon = resp.json()[0]['lon']
 
+        return (lat, lon)
+    except:
+        return query_string
 
-# Caching could work here? Or would it make more sense to cache
-
+# Caching could work here? Or would it make more sense to cache bullet
 @flow(name='Machine Gun to API')
 def query_lat_lon_arrays(query_strings: list[str]):
     """
     Makes an API call for each row of DF
     Returns Lat lon lists in a list
     """
-    lat = []
-    lon = []
-    for string in query_strings:
+    loc_info = pd.DataFrame({
+        'lat': [None] * len(query_strings),
+        'lon': [None] * len(query_strings),
+        'failed_string': [None] * len(query_strings)
+    })
+    for i, string in enumerate(query_strings):
         lat_lon = get_lat_lon_from_api(string).result()
 
-        lat.append(lat_lon[0])
-        lon.append(lat_lon[1])
+        if type(lat_lon) != str:
+            loc_info['lat'].iloc[i] = lat_lon[0]
+            loc_info['lon'].iloc[i] = lat_lon[1]
+        else:
+            loc_info['failed_string'].iloc[i] = lat_lon
+
 
     return [lat, lon]
 
