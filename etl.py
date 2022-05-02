@@ -84,7 +84,7 @@ def query_lat_lon_arrays(query_strings: list[str]):
             loc_info['failed_string'].iloc[i] = lat_lon
 
 
-    return [lat, lon]
+    return loc_info
 
 
 # This one might be a bit tricky
@@ -165,6 +165,7 @@ def main(
 
     api_calls = build_api_call_list(address_df).result()
 
+    # This has been changed to return a dataframe
     lat, lon = query_lat_lon_arrays(api_calls).result()
 
     lat_lon_df = insert_lat_lon_cols(address_df, lat, lon).result()
@@ -186,7 +187,7 @@ if __name__ == '__main__':
 
     raw_data_path = 'notebooks/raw/Registered_Business_Locations_-_San_Francisco.csv'
 
-    date_time_cols = [
+    datetime_cols = [
         'Business Start Date',
         'Business End Date',
         'Location Start Date',
@@ -198,7 +199,7 @@ if __name__ == '__main__':
     state = main(
         raw_data_path,
         output_geojson_path,
-        date_time_cols
+        datetime_cols
     )
 
     print("||--|-STATE-|--||\n", state)
